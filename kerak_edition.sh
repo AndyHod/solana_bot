@@ -83,7 +83,9 @@ for index in ${!PUB_KEY[*]}; do
         echo ${TEXT_ALARM[$index]}
         curl --header 'Content-Type: application/json' --request 'POST' --data '{"chat_id":"'"$CHAT_ID_ALARM"'","text":"'"${TEXT_ALARM[$index]}"' '"${PUB_KEY[$index]}"'"}' "https://api.telegram.org/bot$BOT_TOKEN/sendMessage"
     else
-        echo "Все ok" ${PUB_KEY[$index]}
+        local message = "Все ok " ${NODE_NAME[$index]}" баланс:"  $BALANCE  ${PUB_KEY[$index]}
+        echo $message
+        sendTelegramMessage $message
     fi
 done
 
