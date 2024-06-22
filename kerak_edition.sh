@@ -1,6 +1,6 @@
 #!/bin/bash
 export LC_NUMERIC="en_US.UTF-8"
-source $HOME/solana_bot/settings.sh
+source $HOME/solana_bot/my_settings.sh
 echo -e
 date
 $SOLANA_PATH validators -u$CLUSTER --output json-compact > $HOME/solana_bot/delinq$CLUSTER.txt
@@ -44,7 +44,7 @@ curl --header 'Content-Type: application/json' --request 'POST' --data '{"chat_i
     fi
 done
 
-if (( $(echo "$(date +%M) < 5" | bc -l) )); then
+if (( $(echo "$(date +%M) < 5" | bc -l) )); then # Первые 5 минут каждого часа
 
 mesto_top_temp=$($SOLANA_PATH validators -u$CLUSTER --sort=credits -r -n > $HOME/solana_bot/mesto_top$CLUSTER.txt )
 lider=$(cat $HOME/solana_bot/mesto_top$CLUSTER.txt | sed -n 2,1p |  awk '{print $3}')
