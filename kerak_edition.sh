@@ -58,7 +58,6 @@ echo -e
 date
 $SOLANA_PATH validators -u$CLUSTER --output json-compact >$HOME/solana_bot/delinq$CLUSTER.txt
 
-# Переделанный цикл
 for index in ${!PUB_KEY[*]}; do
     PING=$(ping -c 4 ${IP[$index]} | grep transmitted | awk '{print $4}')
     DELINQUENT=$(cat $HOME/solana_bot/delinq$CLUSTER.txt | jq '.validators[] | select(.identityPubkey == "'"${PUB_KEY[$index]}"'" ) | .delinquent ')
@@ -67,7 +66,7 @@ for index in ${!PUB_KEY[*]}; do
     MESSAGE="Отчёт по ноде ${NODE_NAME[$index]}, баланс ${BALANCE}:"
 
     if (($(bc <<<"$BALANCE < ${BALANCEWARN[$index]}"))); then
-        MESSAGE+="Недостаточно средств. Необходимо пополнить. "
+        MESSAGE+="Недостаточно средств. Необходимо пополнить \n${PUB_KEY[$index]}\n"
     fi
     
     if [[ $PING -eq 0 ]]; then
@@ -75,7 +74,7 @@ for index in ${!PUB_KEY[*]}; do
     fi
 
     if [[ $DELINQUENT == true ]]; then
-        MESSAGE+=" Нода отмечена как неактивная (delinquent). "
+        MESSAGE+=" Нода отмечена как неактивная (delinquent). \n"
     fi
 
     if [[ $PING -ne 0 && $DELINQUENT != true && $(bc <<<"$BALANCE >= ${BALANCEWARN[$index]}") -eq 1 ]]; then
@@ -83,27 +82,24 @@ for index in ${!PUB_KEY[*]}; do
     fi
 
     # Отправка сообщения
-    echo "$MESSAGE"
+    echo -e "$MESSAGE \n\n"
     SendTelegramAllertMessage "$MESSAGE"
-    echo -e "n"
 done
 
 
-if (($(echo "$(date +%M) < 5" | bc -l))); then # Первые 5 минут каждого часа
+CURRENT_MIN=$(date +%M)
+if ((10#$CURRENT_MIN < 50)); then
 
-    mesto_top_temp=$($SOLANA_PATH validators -u$CLUSTER --sort=credits -r -n >$HOME/solana_bot/mesto_top$CLUSTER.txt)
+    mesto_top_temp=$($SOLANA_PATH validators -u$CLUSTER --sort=credits -r -n >"$HOME/solana_bot/mesto_top$CLUSTER.txt")
     lider=$(cat $HOME/solana_bot/mesto_top$CLUSTER.txt | sed -n 2,1p | awk '{print $3}')
     lider2=$(cat $HOME/solana_bot/delinq$CLUSTER.txt | jq '.validators[] | select(.identityPubkey == "'"$lider"'") | .epochCredits ')
-    Average_temp=$(cat $HOME/solana_bot/delinq$CLUSTER.txt | jq '.averageStakeWeightedSkipRate')
-    Average=$(printf "%.2f" $Average_temp)
-    if [[ -z "$Average" ]]; then
-        Average=0
-    fi
+    Average=$(jq '.averageStakeWeightedSkipRate' "$HOME/solana_bot/delinq$CLUSTER.txt" | xargs printf "%.2f")
+    Average=${Average:-0}
 
-    RESPONSE_EPOCH=$($SOLANA_PATH epoch-info -u$CLUSTER >$HOME/solana_bot/temp$CLUSTER.txt)
-    EPOCH=$(cat $HOME/solana_bot/temp$CLUSTER.txt | grep "Epoch:" | awk '{print $2}')
-    EPOCH_PERCENT=$(printf "%.2f" $(cat $HOME/solana_bot/temp$CLUSTER.txt | grep "Epoch Completed Percent" | awk '{print $4}' | grep -oE "[0-9]*|[0-9]*.[0-9]*" | awk 'NR==1 {print; exit}'))"%"
-    END_EPOCH=$(echo $(cat $HOME/solana_bot/temp$CLUSTER.txt | grep "Epoch Completed Time" | grep -o '(.*)' | sed "s/^(//" | awk '{$NF="";sub(/[ \t]+$/,"")}1'))
+    RESPONSE_EPOCH=$($SOLANA_PATH epoch-info -u$CLUSTER >"$HOME/solana_bot/temp$CLUSTER.txt")
+    EPOCH=$(awk '/Epoch:/ {print $2}' "$HOME/solana_bot/temp$CLUSTER.txt")
+    EPOCH_PERCENT=$(awk '/Epoch Completed Percent/ {print $4+0}' "$HOME/solana_bot/temp$CLUSTER.txt" | xargs printf "%.2f%%")
+    END_EPOCH=$(awk '/Epoch Completed Time/ {$1=$2=""; print $0}' "$HOME/solana_bot/temp$CLUSTER.txt" | tr -d '()')
 
     for index in ${!PUB_KEY[*]}; do
         epochCredits=$(cat $HOME/solana_bot/delinq$CLUSTER.txt | jq '.validators[] | select(.identityPubkey == "'"${PUB_KEY[$index]}"'" ) | .epochCredits ')
