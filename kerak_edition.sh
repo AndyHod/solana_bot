@@ -1,6 +1,8 @@
 #!/bin/bash
 export LC_NUMERIC="en_US.UTF-8"
-source $HOME/solana_bot/my_settings.sh
+URL=$HOME/solana_bot
+source $URL/my_settings.sh
+declare -a BALANCE_BY_INDEX
 
 getBalance() {
     local publicKey=$1
@@ -46,7 +48,7 @@ sendTelegramMessage() {
     # Убедитесь, что переменная BOT_TOKEN содержит ваш токен бота.
     curl --silent --header 'Content-Type: application/json' \
         --request 'POST' \
-        --data '{"chat_id":"'"$chatId"'","text":"'"$messageText"'"}' \
+        --data '{"chat_id":"'"$chatId"'","text":"'"$messageText"'","parse_mode":"HTML"}' \
         "https://api.telegram.org/bot$BOT_TOKEN/sendMessage" >/dev/null
 }
 
@@ -56,54 +58,91 @@ SendTelegramAllertMessage() {
 
 echo -e
 date
-$SOLANA_PATH validators -u$CLUSTER --output json-compact >$HOME/solana_bot/delinq$CLUSTER.txt
+$SOLANA_PATH validators -u$CLUSTER --output json-compact >$URL/delinq$CLUSTER.txt
 
-for index in ${!PUB_KEY[*]}; do
-    PING=$(ping -c 4 ${IP[$index]} | grep transmitted | awk '{print $4}')
-    DELINQUENT=$(cat $HOME/solana_bot/delinq$CLUSTER.txt | jq '.validators[] | select(.identityPubkey == "'"${PUB_KEY[$index]}"'" ) | .delinquent ')
-    BALANCE=$(getBalance ${PUB_KEY[$index]} "$API_URL")
+checkBalancePingDeliquent() {
+    for index in ${!PUB_KEY[*]}; do
+        PING=$(ping -c 4 ${IP[$index]} | grep transmitted | awk '{print $4}')
+        DELINQUENT=$(cat $URL/delinq$CLUSTER.txt | jq '.validators[] | select(.identityPubkey == "'"${PUB_KEY[$index]}"'" ) | .delinquent ')
+        BALANCE=$(getBalance ${PUB_KEY[$index]} "$API_URL")
+        BALANCE_BY_INDEX[$index]=$BALANCE
 
-    MESSAGE="Отчёт по ноде ${NODE_NAME[$index]}, баланс ${BALANCE}:"
+        MESSAGE="Отчёт по ноде ${NODE_NAME[$index]}, баланс ${BALANCE}:"
 
-    if (($(bc <<<"$BALANCE < ${BALANCEWARN[$index]}"))); then
-        MESSAGE+="Недостаточно средств. Необходимо пополнить \n${PUB_KEY[$index]}\n"
+        if (($(bc <<<"$BALANCE < ${BALANCEWARN[$index]}"))); then
+            MESSAGE+="Недостаточно средств. Необходимо пополнить \n${PUB_KEY[$index]}\n"
+            WARN=1
+        fi
+
+        if [[ $PING -eq 0 ]]; then
+            MESSAGE+=" Ping не проходит!! "
+            WARN=1
+        fi
+
+        if [[ $DELINQUENT == true ]]; then
+            MESSAGE+=" Нода отмечена как неактивная (delinquent). \n"
+            WARN=1
+        fi
+
+        if [[ $PING -ne 0 && $DELINQUENT != true && $(bc <<<"$BALANCE >= ${BALANCEWARN[$index]}") -eq 1 ]]; then
+            MESSAGE+="Всё в порядке"
+        fi
+
+        # Отправка сообщения
+        echo -e "$MESSAGE \n\n"
+        sendTelegramMessage "$MESSAGE" "$WARN"
+    done
+}
+
+generate_info() {
+    local onboard_part=""
+    if [[ -n $onboard && $onboard != "null" ]]; then
+        onboard_part="<b>Onboard:</b> $onboard"
     fi
-    
-    if [[ $PING -eq 0 ]]; then
-        MESSAGE+=" Нет связи с нодой. Проверьте подключение. "
+
+    local cluster_part=""
+    if [[ $CLUSTER == m ]]; then
+        cluster_name="Mainnet"
+        cluster_part="MainNet <b>$PUB</b> <b>$VER</b>"
+    else
+        cluster_name="Testnet"
+        cluster_part="<b>$PUB</b> $VER"
     fi
 
-    if [[ $DELINQUENT == true ]]; then
-        MESSAGE+=" Нода отмечена как неактивная (delinquent). \n"
-    fi
+    echo "<b>${NODE_NAME[$index]} ${cluster_name} nr ${index}</b>:
+${PUB_KEY[$index]}
+<code>
+<b>Blocks</b> All: $All_block Done: $Done Skipped: $skipped
+<b>Skip:</b> $skip% <b>Average:</b> $Average%
+<b>Credits:</b> $epochCredits ($proc%)
+<b>Position:</b> $mesto_top $onboard_part
+<b>Stake</b> Active: $ACTIVE
+Activating: $ACTIVATING
+Deactivating: $DEACTIVATING
+<b>Balance:</b> $BALANCE
+<b>Vote Balance:</b> $VOTE_BALANCE
+</code>"
+}
 
-    if [[ $PING -ne 0 && $DELINQUENT != true && $(bc <<<"$BALANCE >= ${BALANCEWARN[$index]}") -eq 1 ]]; then
-        MESSAGE+="Всё в порядке"
-    fi
-
-    # Отправка сообщения
-    echo -e "$MESSAGE \n\n"
-    SendTelegramAllertMessage "$MESSAGE"
-done
-
+checkBalancePingDeliquent
 
 CURRENT_MIN=$(date +%M)
-if ((10#$CURRENT_MIN < 50)); then
+if ((10#$CURRENT_MIN < 5)); then
 
-    mesto_top_temp=$($SOLANA_PATH validators -u$CLUSTER --sort=credits -r -n >"$HOME/solana_bot/mesto_top$CLUSTER.txt")
-    lider=$(cat $HOME/solana_bot/mesto_top$CLUSTER.txt | sed -n 2,1p | awk '{print $3}')
-    lider2=$(cat $HOME/solana_bot/delinq$CLUSTER.txt | jq '.validators[] | select(.identityPubkey == "'"$lider"'") | .epochCredits ')
-    Average=$(jq '.averageStakeWeightedSkipRate' "$HOME/solana_bot/delinq$CLUSTER.txt" | xargs printf "%.2f")
+    mesto_top_temp=$($SOLANA_PATH validators -u$CLUSTER --sort=credits -r -n >"$URL/mesto_top$CLUSTER.txt")
+    lider=$(cat $URL/mesto_top$CLUSTER.txt | sed -n 2,1p | awk '{print $3}')
+    lider2=$(cat $URL/delinq$CLUSTER.txt | jq '.validators[] | select(.identityPubkey == "'"$lider"'") | .epochCredits ')
+    Average=$(jq '.averageStakeWeightedSkipRate' "$URL/delinq$CLUSTER.txt" | xargs printf "%.2f")
     Average=${Average:-0}
 
-    RESPONSE_EPOCH=$($SOLANA_PATH epoch-info -u$CLUSTER >"$HOME/solana_bot/temp$CLUSTER.txt")
-    EPOCH=$(awk '/Epoch:/ {print $2}' "$HOME/solana_bot/temp$CLUSTER.txt")
-    EPOCH_PERCENT=$(awk '/Epoch Completed Percent/ {print $4+0}' "$HOME/solana_bot/temp$CLUSTER.txt" | xargs printf "%.2f%%")
-    END_EPOCH=$(awk '/Epoch Completed Time/ {$1=$2=""; print $0}' "$HOME/solana_bot/temp$CLUSTER.txt" | tr -d '()')
-
+    RESPONSE_EPOCH=$($SOLANA_PATH epoch-info -u$CLUSTER >"$URL/temp$CLUSTER.txt")
+    EPOCH=$(awk '/Epoch:/ {print $2}' "$URL/temp$CLUSTER.txt")
+    EPOCH_PERCENT=$(awk '/Epoch Completed Percent/ {print $4+0}' "$URL/temp$CLUSTER.txt" | xargs printf "%.2f%%")
+    END_EPOCH=$(awk '/Epoch Completed Time/ {$1=$2=""; print $0}' "$URL/temp$CLUSTER.txt" | tr -d '()')
+    echo 140
     for index in ${!PUB_KEY[*]}; do
-        epochCredits=$(cat $HOME/solana_bot/delinq$CLUSTER.txt | jq '.validators[] | select(.identityPubkey == "'"${PUB_KEY[$index]}"'" ) | .epochCredits ')
-        mesto_top=$(cat $HOME/solana_bot/mesto_top$CLUSTER.txt | grep ${PUB_KEY[$index]} | awk '{print $1}' | grep -oE "[0-9]*|[0-9]*.[0-9]")
+        epochCredits=$(cat $URL/delinq$CLUSTER.txt | jq '.validators[] | select(.identityPubkey == "'"${PUB_KEY[$index]}"'" ) | .epochCredits ')
+        mesto_top=$(cat $URL/mesto_top$CLUSTER.txt | grep ${PUB_KEY[$index]} | awk '{print $1}' | grep -oE "[0-9]*|[0-9]*.[0-9]")
         proc=$(bc <<<"scale=2; $epochCredits*100/$lider2")
         onboard=$(curl -s -X GET 'https://kyc-api.vercel.app/api/validators/list?search_term='"${PUB_KEY[$index]}"'&limit=40&order_by=name&order=asc' | jq '.data[0].onboardingnumber')
         #dali blokov
@@ -124,7 +163,12 @@ if ((10#$CURRENT_MIN < 50)); then
         fi
         skipped=$(bc <<<"$Done - $sdelal_blokov")
 
-        skip=$(bc <<<"scale=2; $skipped*100/$Done")
+        if [[ $Done -eq 0 ]]; then
+            skip=0
+        else
+            skip=$(bc <<<"scale=2; $skipped*100/$Done")
+        fi
+
         if [[ -z "$skip" ]]; then
             skip=0
         fi
@@ -134,24 +178,9 @@ if ((10#$CURRENT_MIN < 50)); then
         else
             skip=🔴$skip
         fi
+        BALANCE=${BALANCE_BY_INDEX[$index]}
 
-        BALANCE_TEMP=$(curl --silent -X POST $API_URL -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0", "id":1, "method":"getBalance", "params":["'${PUB_KEY[$index]}'"]}' | jq '.result.value')
-        BALANCE=$(echo "scale=2; $BALANCE_TEMP/1000000000" | bc)
-        simvol1=${BALANCE:0:1}
-        if [[ $simvol1 = . ]]; then
-            BALANCE="0$BALANCE"
-        else
-            BALANCE=$BALANCE
-        fi
-
-        VOTE_BALANCE_TEMP=$(curl --silent -X POST $API_URL -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0", "id":1, "method":"getBalance", "params":["'${VOTE[$index]}'"]}' | jq '.result.value')
-        VOTE_BALANCE=$(echo "scale=2; $VOTE_BALANCE_TEMP/1000000000" | bc)
-        simvol1=${VOTE_BALANCE:0:1}
-        if [[ $simvol1 = . ]]; then
-            VOTE_BALANCE="0$VOTE_BALANCE"
-        else
-            VOTE_BALANCE=$VOTE_BALANCE
-        fi
+        VOTE_BALANCE=$(getBalance ${VOTE[$index]} "$API_URL")
 
         RESPONSE_STAKES=$($SOLANA_PATH stakes ${VOTE[$index]} -u$CLUSTER --output json-compact)
         ACTIVE=$(echo "scale=2; $(echo $RESPONSE_STAKES | jq -c '.[] | .activeStake' | paste -sd+ | bc)/1000000000" | bc)
@@ -164,87 +193,27 @@ if ((10#$CURRENT_MIN < 50)); then
             DEACTIVATING=$DEACTIVATING⚠️
         fi
 
-        VER=$(cat $HOME/solana_bot/delinq$CLUSTER.txt | jq '.validators[] | select(.identityPubkey == "'"${PUB_KEY[$index]}"'" ) | .version ' | sed 's/\"//g')
-
-        comission=$(bc <<<"scale=3; (($epochCredits*5) - ($sdelal_blokov*3750))/1000000")
-        minus=${comission:0:1}
-        if [[ $minus = - ]]; then
-            comission=$(bc <<<"scale=3; $comission * -1")
-            simvol1=${comission:0:1}
-            if [[ $simvol1 = . ]]; then
-                comission="earn 0$comission"
-            else
-                comission="earn $comission"
-            fi
-        fi
-
-        if [[ $minus = . ]]; then
-            comission=0$comission
-        else
-            comission=$comission
-        fi
+        VER=$(cat $URL/delinq$CLUSTER.txt | jq '.validators[] | select(.identityPubkey == "'"${PUB_KEY[$index]}"'" ) | .version ' | sed 's/\"//g')
 
         PUB=$(echo ${PUB_KEY[$index]:0:10})
-        info='"
-<b>'"${TEXT_NODE[$index]}"'</b> '"[$PUB]"' ['"$VER"']<code>
-'"All:"$All_block" Done:"$Done" skipped:"$skipped""'
-'"skip:"$skip%" Average:"$Average%""'
-сredits >['"$epochCredits"'] ['"$proc"'%]
-mesto>['"$mesto_top"'] onboard > ['"$onboard"']
-active_stk >>>['"$ACTIVE"']
-activating >>>['"$ACTIVATING"']
-deactivating >['"$DEACTIVATING"']
-balance>['"$BALANCE"']  
-vote_balance>>['"$VOTE_BALANCE"']
-comission>['"$comission"' sol]</code>"'
-
-        if [[ $onboard == null ]]; then
-            info='"
-<b>'"${TEXT_NODE[$index]}"'</b> '"[$PUB]"' ['"$VER"']<code>
-'"All:"$All_block" Done:"$Done" skipped:"$skipped""'
-'"skip:"$skip%" Average:"$Average%""'
-сredits >['"$epochCredits"'] ['"$proc"'%]
-mesto>['"$mesto_top"'] 
-active_stk >>>['"$ACTIVE"']
-activating >>>['"$ACTIVATING"']
-deactivating >['"$DEACTIVATING"']
-balance>['"$BALANCE"']  
-vote_balance>>['"$VOTE_BALANCE"']
-comission>['"$comission"' sol]</code>"'
-        fi
-
-        if [[ $CLUSTER == m ]]; then
-            info='"
-<b>'"${TEXT_NODE[$index]}"'</b> ['"$PUB"'] ['"$VER"']<code>
-'"All:"$All_block" Done:"$Done" skipped:"$skipped""'
-'"skip:"$skip%" Average:"$Average%""'
-сredits >['"$epochCredits"'] ['"$proc"'%]
-mesto>['"$mesto_top"'] 
-active_stk >>>['"$ACTIVE"']
-activating >>>['"$ACTIVATING"']
-deactivating >['"$DEACTIVATING"']
-balance>['"$BALANCE"']  
-vote_balance>>['"$VOTE_BALANCE"']
-comission>['"$comission"' sol]</code>"'
-        fi
-        echo "Нода в порядке" ${TEXT_NODE[$index]}
-        curl --header 'Content-Type: application/json' --request 'POST' --data '{"chat_id":"'"$CHAT_ID_LOG"'",
-"text":'"$info"',  "parse_mode": "html"}' "https://api.telegram.org/bot$BOT_TOKEN/sendMessage"
-        echo -e "\n"
+        info=$(generate_info)
+        echo "Нода в порядке ${info} "
+        sendTelegramMessage "$info"
     done
 
     if (($(echo "$(date +%H) == $TIME_Info2" | bc -l))) && (($(echo "$(date +%M) < 5" | bc -l))); then
         let EPOCH=$EPOCH-1
+
         for index in ${!PUB_KEY[*]}; do
 
-            info2=$(curl -s -X GET 'https://kyc-api.vercel.app/api/validators/details?pk='"${PUB_KEY[$index]}"'&epoch='"$EPOCH"'' | jq '.stats' >$HOME/solana_bot/info2$CLUSTER.txt)
+            info2=$(curl -s -X GET 'https://kyc-api.vercel.app/api/validators/details?pk='"${PUB_KEY[$index]}"'&epoch='"$EPOCH"'' | jq '.stats' >$URL/info2$CLUSTER.txt)
 
-            state_action=$(cat $HOME/solana_bot/info2$CLUSTER.txt | jq '.state_action' | sed 's/\"//g')
-            asn=$(cat $HOME/solana_bot/info2$CLUSTER.txt | jq '.epoch_data_center.asn')
-            location=$(cat $HOME/solana_bot/info2$CLUSTER.txt | jq '.epoch_data_center.location' | sed 's/\"//g')
-            data_center_percent_temp=$(cat $HOME/solana_bot/info2$CLUSTER.txt | grep "data_center_stake_percent" | awk '{print $2}' | sed 's/\,//g')
+            state_action=$(cat $URL/info2$CLUSTER.txt | jq '.state_action' | sed 's/\"//g')
+            asn=$(cat $URL/info2$CLUSTER.txt | jq '.epoch_data_center.asn')
+            location=$(cat $URL/info2$CLUSTER.txt | jq '.epoch_data_center.location' | sed 's/\"//g')
+            data_center_percent_temp=$(cat $URL/info2$CLUSTER.txt | grep "data_center_stake_percent" | awk '{print $2}' | sed 's/\,//g')
             data_center_percent=$(printf "%.2f" $data_center_percent_temp)
-            reported_metrics_summar=$(cat $HOME/solana_bot/info2$CLUSTER.txt | jq '.self_reported_metrics_summary.reason' | sed 's/\"//g')
+            reported_metrics_summar=$(cat $URL/info2$CLUSTER.txt | jq '.self_reported_metrics_summary.reason' | sed 's/\"//g')
 
             PUB=$(echo ${PUB_KEY[$index]:0:8})
             info2='"
@@ -253,19 +222,15 @@ comission>['"$comission"' sol]</code>"'
 *'"$asn"' '"$location"' '"$data_center_percent"'%
 *'"$reported_metrics_summar"'</code>"'
             if [[ $reported_metrics_summar != null ]]; then
-                curl --header 'Content-Type: application/json' --request 'POST' --data '{"chat_id":"'"$CHAT_ID_LOG"'",
-"text":'"$info2"',  "parse_mode": "html"}' "https://api.telegram.org/bot$BOT_TOKEN/sendMessage"
+                sendTelegramMessage "$info2"
                 echo -e "\n"
             else
                 echo "'"${TEXT_NODE2[$index]}"' Stake-o-matic еще не отработал. Информации нет"
-                curl --header 'Content-Type: application/json' --request 'POST' --data '{"chat_id":"'"$CHAT_ID_LOG"'",
-"text":"'"${TEXT_NODE2[$index]}"' Stake-o-matic еще не отработал. Информации нет",  "parse_mode": "html"}' "https://api.telegram.org/bot$BOT_TOKEN/sendMessage"
+                sendTelegramMessage "${TEXT_NODE2[$index]} Stake-o-matic еще не отработал. Информации нет"
             fi
         done
     fi
-    EPOCH=$(cat $HOME/solana_bot/temp$CLUSTER.txt | grep "Epoch:" | awk '{print $2}')
+    EPOCH=$(cat $URL/temp$CLUSTER.txt | grep "Epoch:" | awk '{print $2}')
     echo "$TEXT_INFO_EPOCH"
-    curl --header 'Content-Type: application/json' --request 'POST' --data '{"chat_id":"'"$CHAT_ID_LOG"'","text":"<b>'"$TEXT_INFO_EPOCH"'</b> <code>
-['"$EPOCH"'] | ['"$EPOCH_PERCENT"'] 
-End_Epoch '"$END_EPOCH"'</code>", "parse_mode": "html"}' "https://api.telegram.org/bot$BOT_TOKEN/sendMessage"
+
 fi
