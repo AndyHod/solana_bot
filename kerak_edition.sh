@@ -44,9 +44,9 @@ sendTelegramMessage() {
 
     # Делаем запрос к Telegram API для отправки сообщения.
     # Убедитесь, что переменная BOT_TOKEN содержит ваш токен бота.
-    curl --silent --header 'Content-Type: application/json' 
-         --request 'POST' 
-         --data '{"chat_id":"'"$chatId"'","text":"'"$messageText"'"}' 
+    curl --silent --header 'Content-Type: application/json' \
+         --request 'POST' \
+         --data '{"chat_id":"'"$chatId"'","text":"'"$messageText"'"}' \
          "https://api.telegram.org/bot$BOT_TOKEN/sendMessage" > /dev/null
 }
 
@@ -67,9 +67,9 @@ for index in ${!PUB_KEY[*]}; do
     BALANCE=$(getBalance ${PUB_KEY[$index]} "$API_URL")
 
     if (($(bc <<<"$BALANCE < ${BALANCEWARN[$index]}"))); then
-        local message="На ноде "${NODE_NAME[$index]}" баланс всего"  $BALANCE "надо пополнить" ${TEXT_NODE[$index]} "адрес" ${PUB_KEY[$index]}
-        echo $message
-        SendTelegramAllertMessage $message
+        MESSAGE="На ноде ${NODE_NAME[$index]} баланс всего  ${BALANCE} надо пополнить ${TEXT_NODE[$index]} адрес ${PUB_KEY[$index]}"
+        echo "$MESSAGE"
+        SendTelegramAllertMessage "$MESSAGE"
     fi
     if [[ $PING == 0 ]] && [[ $DELINQUEENT == true ]]; then
         echo ${INET_ALARM[$index]} ${TEXT_ALARM[$index]}
@@ -83,9 +83,9 @@ for index in ${!PUB_KEY[*]}; do
         echo ${TEXT_ALARM[$index]}
         curl --header 'Content-Type: application/json' --request 'POST' --data '{"chat_id":"'"$CHAT_ID_ALARM"'","text":"'"${TEXT_ALARM[$index]}"' '"${PUB_KEY[$index]}"'"}' "https://api.telegram.org/bot$BOT_TOKEN/sendMessage"
     else
-        local message = "Все ok " ${NODE_NAME[$index]}" баланс:"  $BALANCE  ${PUB_KEY[$index]}
-        echo $message
-        sendTelegramMessage $message
+        MESSAGE = "Все ok ${NODE_NAME[$index]} баланс:  $BALANCE  ${PUB_KEY[$index]}"
+        echo "$MESSAGE"
+        sendTelegramMessage "$MESSAGE"
     fi
 done
 
