@@ -26,7 +26,7 @@ getBalance() {
     finalBalance=$(echo "scale=2; $balanceTemp/1000000000" | bc)
 
     # Добавляем ведущий ноль, если результат начинается с точки.
-    if [[ $finalBalance == .* ]]; then 
+    if [[ $finalBalance == .* ]]; then
         finalBalance="0$finalBalance"
     fi
 
@@ -35,59 +35,59 @@ getBalance() {
 
 sendTelegramMessage() {
     local messageText=$1
-    local isAlarm=${2:-0}  # По умолчанию считаем, что сообщение не тревожное.
-    local chatId="$CHAT_ID_LOG"  # По умолчанию отправляем в логирующий чат
+    local isAlarm=${2:-0}       # По умолчанию считаем, что сообщение не тревожное.
+    local chatId="$CHAT_ID_LOG" # По умолчанию отправляем в логирующий чат
 
     if [[ $isAlarm -ne 0 ]]; then
-        chatId="$CHAT_ID_ALARM"  # Если передан флаг тревоги, отправляем в соответствующий чат
+        chatId="$CHAT_ID_ALARM" # Если передан флаг тревоги, отправляем в соответствующий чат
     fi
 
     # Делаем запрос к Telegram API для отправки сообщения.
     # Убедитесь, что переменная BOT_TOKEN содержит ваш токен бота.
     curl --silent --header 'Content-Type: application/json' \
-         --request 'POST' \
-         --data '{"chat_id":"'"$chatId"'","text":"'"$messageText"'"}' \
-         "https://api.telegram.org/bot$BOT_TOKEN/sendMessage" > /dev/null
+        --request 'POST' \
+        --data '{"chat_id":"'"$chatId"'","text":"'"$messageText"'"}' \
+        "https://api.telegram.org/bot$BOT_TOKEN/sendMessage" >/dev/null
 }
 
 SendTelegramAllertMessage() {
     sendTelegramMessage "$1" 1
 }
 
-
-
 echo -e
 date
 $SOLANA_PATH validators -u$CLUSTER --output json-compact >$HOME/solana_bot/delinq$CLUSTER.txt
 
+# Переделанный цикл
 for index in ${!PUB_KEY[*]}; do
     PING=$(ping -c 4 ${IP[$index]} | grep transmitted | awk '{print $4}')
-    DELINQUEENT=$(cat $HOME/solana_bot/delinq$CLUSTER.txt | jq '.validators[] | select(.identityPubkey == "'"${PUB_KEY[$index]}"'" ) | .delinquent ')
-
+    DELINQUENT=$(cat $HOME/solana_bot/delinq$CLUSTER.txt | jq '.validators[] | select(.identityPubkey == "'"${PUB_KEY[$index]}"'" ) | .delinquent ')
     BALANCE=$(getBalance ${PUB_KEY[$index]} "$API_URL")
 
+    MESSAGE="Отчёт по ноде ${NODE_NAME[$index]}, баланс ${BALANCE}:"
+
     if (($(bc <<<"$BALANCE < ${BALANCEWARN[$index]}"))); then
-        MESSAGE="На ноде ${NODE_NAME[$index]} баланс всего  ${BALANCE} надо пополнить ${TEXT_NODE[$index]} адрес ${PUB_KEY[$index]}"
-        echo "$MESSAGE"
-        SendTelegramAllertMessage "$MESSAGE"
+        MESSAGE+="Недостаточно средств. Необходимо пополнить. "
     fi
-    if [[ $PING == 0 ]] && [[ $DELINQUEENT == true ]]; then
-        echo ${INET_ALARM[$index]} ${TEXT_ALARM[$index]}
-        curl --header 'Content-Type: application/json' --request 'POST' --data '{"chat_id":"'"$CHAT_ID_ALARM"'","text":"'"${INET_ALARM[$index]}"' '"${TEXT_ALARM[$index]}"' '"${PUB_KEY[$index]}"'"}' "https://api.telegram.org/bot$BOT_TOKEN/sendMessage"
-        echo -e "\n"
-    elif [[ $PING == 0 ]]; then
-        echo ${INET_ALARM[$index]}
-        curl --header 'Content-Type: application/json' --request 'POST' --data '{"chat_id":"'"$CHAT_ID_ALARM"'","text":"'"${INET_ALARM[$index]}"' '"${PUB_KEY[$index]}"'"}' "https://api.telegram.org/bot$BOT_TOKEN/sendMessage"
-        echo -e "\n"
-    elif [[ $DELINQUEENT == true ]]; then
-        echo ${TEXT_ALARM[$index]}
-        curl --header 'Content-Type: application/json' --request 'POST' --data '{"chat_id":"'"$CHAT_ID_ALARM"'","text":"'"${TEXT_ALARM[$index]}"' '"${PUB_KEY[$index]}"'"}' "https://api.telegram.org/bot$BOT_TOKEN/sendMessage"
-    else
-        MESSAGE = "Все ok ${NODE_NAME[$index]} баланс:  $BALANCE  ${PUB_KEY[$index]}"
-        echo "$MESSAGE"
-        sendTelegramMessage "$MESSAGE"
+    
+    if [[ $PING -eq 0 ]]; then
+        MESSAGE+=" Нет связи с нодой. Проверьте подключение. "
     fi
+
+    if [[ $DELINQUENT == true ]]; then
+        MESSAGE+=" Нода отмечена как неактивная (delinquent). "
+    fi
+
+    if [[ $PING -ne 0 && $DELINQUENT != true && $(bc <<<"$BALANCE >= ${BALANCEWARN[$index]}") -eq 1 ]]; then
+        MESSAGE+="Всё в порядке"
+    fi
+
+    # Отправка сообщения
+    echo "$MESSAGE"
+    SendTelegramAllertMessage "$MESSAGE"
+    echo -e "n"
 done
+
 
 if (($(echo "$(date +%M) < 5" | bc -l))); then # Первые 5 минут каждого часа
 
