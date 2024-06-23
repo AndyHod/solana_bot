@@ -69,7 +69,7 @@ checkBalancePingDeliquent() {
         BALANCE=$(getBalance ${PUB_KEY[$index]} "$API_URL")
         BALANCE_BY_INDEX[$index]=$BALANCE
 
-        MESSAGE="\n${NODE_NAME[$index]}, баланс: ${BALANCE}."
+        MESSAGE="${NODE_NAME[$index]}, баланс: ${BALANCE}."
 
         if (($(bc <<<"$BALANCE < ${BALANCEWARN[$index]}"))); then
             MESSAGE+="\nНедостаточно средств. Необходимо пополнить \n${PUB_KEY[$index]}\n"
@@ -87,10 +87,10 @@ checkBalancePingDeliquent() {
         fi
 
         if [[ WARN -eq 1 ]]; then 
-            MESSAGE="🔴🔴🔴${MESSAGE}\n\n"
+            MESSAGE="\n🔴🔴🔴${MESSAGE}\n\n"
             SendTelegramAllertMessage "${MESSAGE}"
         else 
-            MESSAGE="🟢${MESSAGE} Всё в порядке!"
+            MESSAGE="\n🟢${MESSAGE} Всё в порядке!"
         fi
         REPORT+=$MESSAGE
     done
