@@ -87,10 +87,10 @@ checkBalancePingDeliquent() {
         fi
 
         if [[ WARN -eq 1 ]]; then 
-            MESSAGE+="🔴🔴🔴\n\n"
+            MESSAGE="🔴🔴🔴${MESSAGE}\n\n"
             SendTelegramAllertMessage "${MESSAGE}"
         else 
-            MESSAGE+="🟢Всё в порядке!"
+            MESSAGE="🟢${MESSAGE} Всё в порядке!"
         fi
         REPORT+=$MESSAGE
     done
