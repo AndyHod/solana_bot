@@ -56,6 +56,18 @@ SendTelegramAllertMessage() {
     sendTelegramMessage "$1" 1
 }
 
+# Фоновый процесс, который ждет 1 минуту, а затем проверяет, завершился ли основной процесс
+(sleep 60 && if ps -p $$ >/dev/null; then
+    SendTelegramAllertMessage "Скрипт мониторинга подвис. Останавливаю принудительно"
+    kill -SIGINT $$
+fi) &
+
+# Идентификатор фонового процесса
+TIMER_PID=$!
+
+# Обработка сигнала прерывания (INT), чтобы корректно завершить фоновый процесс
+trap 'kill $TIMER_PID; exit' INT
+
 echo -e
 date
 $SOLANA_PATH validators -u$CLUSTER --output json-compact >$URL/delinq$CLUSTER.txt
@@ -86,10 +98,10 @@ checkBalancePingDeliquent() {
             WARN=1
         fi
 
-        if [[ WARN -eq 1 ]]; then 
+        if [[ WARN -eq 1 ]]; then
             MESSAGE="\n🔴🔴🔴${MESSAGE}\n\n"
             SendTelegramAllertMessage "${MESSAGE}"
-        else 
+        else
             MESSAGE="\n🟢${MESSAGE} Всё в порядке!"
         fi
         REPORT+=$MESSAGE
@@ -239,3 +251,5 @@ if ((10#$CURRENT_MIN < 5)); then
     echo "$TEXT_INFO_EPOCH"
 
 fi
+
+kill $TIMER_PID
