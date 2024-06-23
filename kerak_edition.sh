@@ -61,37 +61,42 @@ date
 $SOLANA_PATH validators -u$CLUSTER --output json-compact >$URL/delinq$CLUSTER.txt
 
 checkBalancePingDeliquent() {
-    MESSAGE=""
+    REPORT="Общий отчет "
     for index in ${!PUB_KEY[*]}; do
+        WARN=0
         PING=$(ping -c 4 ${IP[$index]} | grep transmitted | awk '{print $4}')
         DELINQUENT=$(cat $URL/delinq$CLUSTER.txt | jq '.validators[] | select(.identityPubkey == "'"${PUB_KEY[$index]}"'" ) | .delinquent ')
         BALANCE=$(getBalance ${PUB_KEY[$index]} "$API_URL")
         BALANCE_BY_INDEX[$index]=$BALANCE
 
-        MESSAGE+="Отчёт по ноде ${NODE_NAME[$index]}, баланс: ${BALANCE},"
+        MESSAGE="\n${NODE_NAME[$index]}, баланс: ${BALANCE}."
 
         if (($(bc <<<"$BALANCE < ${BALANCEWARN[$index]}"))); then
-            MESSAGE+="Недостаточно средств. Необходимо пополнить \n${PUB_KEY[$index]}\n"
+            MESSAGE+="\nНедостаточно средств. Необходимо пополнить \n${PUB_KEY[$index]}\n"
             WARN=1
         fi
 
         if [[ $PING -eq 0 ]]; then
-            MESSAGE+=" Ping не проходит!! "
+            MESSAGE+=" Ping не проходит!!\n"
             WARN=1
         fi
 
         if [[ $DELINQUENT == true ]]; then
-            MESSAGE+=" Нода отмечена как неактивная (delinquent). \n"
+            MESSAGE+=" Нода отмечена как неактивная (delinquent)!!\n"
             WARN=1
         fi
 
-        if [[ $PING -ne 0 && $DELINQUENT != true && $(bc <<<"$BALANCE >= ${BALANCEWARN[$index]}") -eq 1 ]]; then
-            MESSAGE+="Всё в порядке"
+        if [[WARN -eq 1]]; then 
+            MESSAGE+="🔴🔴🔴\n\n"
+            SendTelegramAllertMessage "${MESSAGE}"
+        else 
+            MESSAGE+="🟢Всё в порядке!"
         fi
+        REPORT+=$MESSAGE
     done
     # Отправка сообщения
-    echo -e "$MESSAGE \n\n"
-    sendTelegramMessage "$MESSAGE" "$WARN"
+    echo -e "$REPORT"
+    sendTelegramMessage "$REPORT"
 }
 
 generate_info() {
