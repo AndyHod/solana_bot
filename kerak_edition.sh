@@ -61,13 +61,14 @@ date
 $SOLANA_PATH validators -u$CLUSTER --output json-compact >$URL/delinq$CLUSTER.txt
 
 checkBalancePingDeliquent() {
+    MESSAGE=""
     for index in ${!PUB_KEY[*]}; do
         PING=$(ping -c 4 ${IP[$index]} | grep transmitted | awk '{print $4}')
         DELINQUENT=$(cat $URL/delinq$CLUSTER.txt | jq '.validators[] | select(.identityPubkey == "'"${PUB_KEY[$index]}"'" ) | .delinquent ')
         BALANCE=$(getBalance ${PUB_KEY[$index]} "$API_URL")
         BALANCE_BY_INDEX[$index]=$BALANCE
 
-        MESSAGE="Отчёт по ноде ${NODE_NAME[$index]}, баланс ${BALANCE}:"
+        MESSAGE+="Отчёт по ноде ${NODE_NAME[$index]}, баланс: ${BALANCE},"
 
         if (($(bc <<<"$BALANCE < ${BALANCEWARN[$index]}"))); then
             MESSAGE+="Недостаточно средств. Необходимо пополнить \n${PUB_KEY[$index]}\n"
@@ -87,11 +88,10 @@ checkBalancePingDeliquent() {
         if [[ $PING -ne 0 && $DELINQUENT != true && $(bc <<<"$BALANCE >= ${BALANCEWARN[$index]}") -eq 1 ]]; then
             MESSAGE+="Всё в порядке"
         fi
-
-        # Отправка сообщения
-        echo -e "$MESSAGE \n\n"
-        sendTelegramMessage "$MESSAGE" "$WARN"
     done
+    # Отправка сообщения
+    echo -e "$MESSAGE \n\n"
+    sendTelegramMessage "$MESSAGE" "$WARN"
 }
 
 generate_info() {
