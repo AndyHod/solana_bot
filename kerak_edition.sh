@@ -113,11 +113,10 @@ generate_node_report() {
 
     EPOCH_PERCENT_DONE=$(awk '/Epoch Completed Percent/ {print $4+0}' "$URL/temp$CLUSTER.txt" | xargs printf "%.2f%%")
     END_EPOCH=$(awk '/Epoch Completed Time/ {$1=$2=""; print $0}' "$URL/temp$CLUSTER.txt" | tr -d '()')
-    EPOCH_MESSAGE="Epoch:${EPOCH} (${EPOCH_PERCENT_DONE}).\n${END_EPOCH}"
 
     epochCredits=$(cat $URL/delinq$CLUSTER.txt | jq '.validators[] | select(.identityPubkey == "'"${PUBLIC_KEY}"'" ) | .epochCredits ')
-    mesto_top=$(cat $URL/mesto_top$CLUSTER.txt | grep ${PUBLIC_KEY} | awk '{print $1}' | grep -oE "[0-9]*|[0-9]*.[0-9]")
-    proc=$(bc <<<"scale=2; $epochCredits*100/$lider2")
+    position_by_credits=$(cat $URL/validtors_by_credits_$CLUSTER.txt | grep ${PUBLIC_KEY} | awk '{print $1}' | grep -oE "[0-9]*|[0-9]*.[0-9]")
+    credits_percent=$(bc <<<"scale=2; $epochCredits*100/$lider2")
     #dali blokov
     All_block=$(curl --silent -X POST ${API_URL} -H 'Content-Type: application/json' -d '{ "jsonrpc":"2.0","id":1, "method":"getLeaderSchedule", "params": [ null, { "identity": "'${PUB_KEY[$index]}'" }] }' | jq '.result."'${PUB_KEY[$index]}'"' | wc -l)
     All_block=$(echo "${All_block} -2" | bc)
@@ -126,30 +125,30 @@ generate_node_report() {
     fi
     #done,sdelal,skipnul, skyp%
     BLOCKS_PRODUCTION_JSON=$(curl --silent -X POST ${API_URL} -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":1, "method":"getBlockProduction", "params": [{ "identity": "'${PUB_KEY[$index]}'" } ]}')
-    Done=$(echo ${BLOCKS_PRODUCTION_JSON} | jq '.result.value.byIdentity."'${PUBLIC_KEY}'"[0]')
-    if (($(bc <<<"$Done == null"))); then
-        Done=0
+    blocks_counter=$(echo ${BLOCKS_PRODUCTION_JSON} | jq '.result.value.byIdentity."'${PUBLIC_KEY}'"[0]')
+    if (($(bc <<<"$blocks_counter == null"))); then
+        blocks_counter=0
     fi
-    sdelal_blokov=$(echo ${BLOCKS_PRODUCTION_JSON} | jq '.result.value.byIdentity."'${PUBLIC_KEY}'"[1]')
-    if [[ -z "$sdelal_blokov" ]]; then
-        sdelal_blokov=0
+    blocks_success=$(echo ${BLOCKS_PRODUCTION_JSON} | jq '.result.value.byIdentity."'${PUBLIC_KEY}'"[1]')
+    if [[ -z "$blocks_success" ]]; then
+        blocks_success=0
     fi
-    skipped=$(bc <<<"$Done - $sdelal_blokov")
+    skipped=$(bc <<<"$blocks_counter - $blocks_success")
 
-    if [[ $Done -eq 0 ]]; then
-        skip=0
+    if [[ $blocks_counter -eq 0 ]]; then
+        skip_percent=0
     else
-        skip=$(bc <<<"scale=2; $skipped*100/$Done")
+        skip_percent=$(bc <<<"scale=2; $skipped*100/$blocks_counter")
     fi
 
-    if [[ -z "$skip" ]]; then
-        skip=0
+    if [[ -z "$skip_percent" ]]; then
+        skip_percent=0
     fi
 
-    if (($(bc <<<"$skip <= $Average + $skip_dop"))); then
-        skip=🟢$skip
+    if (($(bc <<<"$skip_percent <= $skip_average"))); then
+        skip_percent=🟢$skip_percent
     else
-        skip=🔴$skip
+        skip_percent=🔴$skip_percent
     fi
 
     BALANCE=$(getBalance ${PUBLIC_KEY} "$API_URL")
@@ -177,34 +176,35 @@ generate_node_report() {
     if [[ $CLUSTER == t ]]; then
         onboard=$(curl -s -X GET 'https://kyc-api.vercel.app/api/validators/list?search_term='"${PUBLIC_KEY}"'&limit=40&order_by=name&order=asc' | jq '.data[0].onboardingnumber')
         if [[ -n $onboard && $onboard != "null" ]]; then
-        ADDITIONAL_MESSAGE+="<b>Onboard nr :</b> ${onboard}\n"
+            ADDITIONAL_MESSAGE+="<b>Onboard nr :</b> ${onboard}\n"
         fi
     fi
 
     echo "<b>${NODE_NAME[$index]} ${CLUSTER_NAME} nr ${index}</b>. Version:<b>$VER</b>:
 <code>${PUBLIC_KEY}</code>
 ${ADDITIONAL_MESSAGE}
-
-<b>Blocks</b> All: $All_block Done: $Done Skipped: $skipped
-<b>Skip:</b> $skip% <b>Average:</b> $Average%
-<b>Credits:</b> $epochCredits ($proc%) <b>Position:</b> $mesto_top 
-<b>Stake</b> Current: $ACTIVE. Next Epoch Cahnge: +$ACTIVATING,  -$DEACTIVATING
+<b>Blocks</b> All: $All_block Done: $blocks_counter Skipped: $skipped ($skip_percent%)
+Average skip by claster: $skip_average%
+<b>Credits:</b> $epochCredits ($credits_percent%) 
+<b>Position:</b> $position_by_credits 
+<b>Stake</b>: Curent $ACTIVE. 
+        Next Epoch Change: +$ACTIVATING,  -$DEACTIVATING
 <b>Balance:</b> Identity $BALANCE. Vote: $VOTE_BALANCE
 ---
-${EPOCH_MESSAGE}
+Epoch: ${EPOCH} (${EPOCH_PERCENT_DONE}).\n${END_EPOCH}
 "
 }
 
 checkPingDeliquent
 
 CURRENT_MIN=$(date +%M)
-if ((10#$CURRENT_MIN < 2)); then
+if ((10#$CURRENT_MIN < 2 || "$1" == "1")); then
 
-    mesto_top_temp=$($SOLANA_PATH validators -u$CLUSTER --sort=credits -r -n >"$URL/mesto_top$CLUSTER.txt")
-    lider=$(cat $URL/mesto_top$CLUSTER.txt | sed -n 2,1p | awk '{print $3}')
+    $($SOLANA_PATH validators -u$CLUSTER --sort=credits -r -n >"$URL/validtors_by_credits_$CLUSTER.txt")
+    lider=$(cat $URL/validtors_by_credits_$CLUSTER.txt | sed -n 2,1p | awk '{print $3}')
     lider2=$(cat $URL/delinq$CLUSTER.txt | jq '.validators[] | select(.identityPubkey == "'"$lider"'") | .epochCredits ')
-    Average=$(jq '.averageStakeWeightedSkipRate' "$URL/delinq$CLUSTER.txt" | xargs printf "%.2f")
-    Average=${Average:-0}
+    skip_average=$(jq '.averageStakeWeightedSkipRate' "$URL/delinq$CLUSTER.txt" | xargs printf "%.2f")
+    skip_average=${skip_average:-0}
 
     $($SOLANA_PATH epoch-info -u$CLUSTER >"$URL/temp$CLUSTER.txt")
     EPOCH=$(awk '/Epoch:/ {print $2}' "$URL/temp$CLUSTER.txt")
@@ -218,7 +218,7 @@ if ((10#$CURRENT_MIN < 2)); then
         sendTelegramMessage "${node_report}" ${WARN}
 
         # Один раз  в сутки только проверяем Данные с SFDP за прошлую эпоху
-        if (($(echo "$(date +%H) == $TIME_Info2" | bc -l))); then
+        if [ "$1" -eq 1 ] && [ $(date +%H) -eq "$TIME_Info2" ]; then
 
             $(curl -s -X GET 'https://kyc-api.vercel.app/api/validators/details?pk='"${PUBLIC_KEY}"'&epoch='"$PREW_EPOCH"'' | jq '.stats' >$URL/info2$CLUSTER.txt)
 
