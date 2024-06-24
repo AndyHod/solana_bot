@@ -72,8 +72,8 @@ fi
 
 check_ping_deliquent() {
     report="Общий отчет \n"
-    for index in "${!PUB_KEY[*]}"; do
-        public_key="${PUB_KEY[$index]}"
+    for index in ${!PUB_KEY[*]}; do
+        public_key=${PUB_KEY[$index]}
         warn=0
         ping_output=$(ping -c 4 "${IP[$index]}" | grep transmitted | awk '{print $4}')
 
@@ -81,12 +81,12 @@ check_ping_deliquent() {
         message="${NODE_NAME[$index]}"
 
         if [[ $ping_output -eq 0 ]]; then
-            message+="\n 🔴🔴🔴 Ping не проходит!!"
+            message+="\n 🔴🔴🔴 Ping не проходит!!\n"
             warn=1
         fi
 
         if [[ $delinquent == true ]]; then
-            message+="\n 🔴🔴🔴 Нода отмечена как неактивная (delinquent)!!"
+            message+="\n 🔴🔴🔴 Нода отмечена как неактивная (delinquent)!!\n"
             warn=1
         fi
 
@@ -167,7 +167,7 @@ generate_node_report() {
         fi
     fi
 
-    echo = "<b>${node_name[$index]} ${cluster_name} nr ${index}</b>. Version:<b>$ver</b>:
+    echo = "<b>${NODE_NAME[$index]} ${cluster_name} nr ${index}</b>. Version:<b>$ver</b>:
 <code>${public_key}</code>
 ${additional_message}
 <b>Blocks</b> All: $all_block Done: $blocks_counter Skipped: $skipped ($skip_percent%)
@@ -185,7 +185,7 @@ Epoch: ${epoch} (${epoch_percent_done}).\n${end_epoch}
 check_ping_deliquent
 
 CURRENT_MIN=$(date +%M)
-if ((10#$CURRENT_MIN < 2 || "$1" == "1")); then
+if ((10#$CURRENT_MIN < 2)); then
 
     $($SOLANA_PATH validators -u$CLUSTER --sort=credits -r -n >"$url/validtors_by_credits_$CLUSTER.txt")
     lider=$(cat $url/validtors_by_credits_$CLUSTER.txt | sed -n 2,1p | awk '{print $3}')
@@ -209,7 +209,7 @@ if ((10#$CURRENT_MIN < 2 || "$1" == "1")); then
         send_telegram_message "${node_report}" ${WARN}
 
         # Один раз  в сутки только проверяем Данные с SFDP за прошлую эпоху
-        if [ "$1" -eq 1 ] && [ $(date +%H) -eq "$TIME_Info2" ]; then
+        if [ "$1" -eq 1 ] || [ $(date +%H) -eq "$TIME_Info2" ]; then
 
             $(curl -s -X GET 'https://kyc-api.vercel.app/api/validators/details?pk='"${public_key}"'&epoch='"$prew_epoch"'' | jq '.stats' >$url/info2$CLUSTER.txt)
             echo 216
