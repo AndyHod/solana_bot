@@ -2,7 +2,8 @@
 export LC_NUMERIC="en_US.UTF-8"
 URL=$HOME/solana_bot
 source $URL/my_settings.sh
-declare -a BALANCE_BY_INDEX
+echo -e
+date
 
 getBalance() {
     local publicKey=$1
@@ -19,7 +20,6 @@ getBalance() {
         if [[ $balanceTemp -gt 0 || $retryCount -ge 1 ]]; then
             break
         fi
-
         ((retryCount++))
         sleep 1
     done
@@ -31,7 +31,6 @@ getBalance() {
     if [[ $finalBalance == .* ]]; then
         finalBalance="0$finalBalance"
     fi
-
     echo "$finalBalance"
 }
 
@@ -56,19 +55,18 @@ SendTelegramAllertMessage() {
     sendTelegramMessage "$1" 1
 }
 
-# Фоновый процесс, gроверяет, завершился ли основной процесс  вовремя
-(sleep 90 && if ps -p $$ >/dev/null; then
-    SendTelegramAllertMessage "Скрипт мониторинга подвис. Останавливаю принудительно"
-    kill -SIGINT $$
-fi) &
-# Идентификатор фонового процесса
-TIMER_PID=$!
+HaltOnHangUP() {
+    # Фоновый процесс, проверяет, завершился ли основной процесс  вовремя
+    (sleep 90 && if ps -p $$ >/dev/null; then
+        SendTelegramAllertMessage "Скрипт мониторинга подвис. Останавливаю принудительно"
+        kill -SIGINT $$
+    fi) &
+    TIMER_PID=$!
+    trap 'kill $TIMER_PID; exit' INT
 
-# Обработка сигнала прерывания (INT), чтобы корректно завершить фоновый процесс
-trap 'kill $TIMER_PID; exit' INT
+}
 
-echo -e
-date
+HaltOnHangUP
 
 if [[ $CLUSTER == m ]]; then
     CLUSTER_NAME="Mainnet"
@@ -80,7 +78,7 @@ fi
 $SOLANA_PATH validators -u$CLUSTER --output json-compact >$URL/delinq$CLUSTER.txt
 
 checkPingDeliquent() {
-    REPORT="Общий отчет "
+    REPORT="Общий отчет \n"
     for index in ${!PUB_KEY[*]}; do
         WARN=0
         PING=$(ping -c 4 ${IP[$index]} | grep transmitted | awk '{print $4}')
@@ -88,20 +86,19 @@ checkPingDeliquent() {
         MESSAGE="${NODE_NAME[$index]}"
 
         if [[ $PING -eq 0 ]]; then
-            MESSAGE+="\nPing не проходит!!"
+            MESSAGE+="\n 🔴🔴🔴 Ping не проходит!!"
             WARN=1
         fi
 
         if [[ $DELINQUENT == true ]]; then
-            MESSAGE+="\n Нода отмечена как неактивная (delinquent)!!"
+            MESSAGE+="\n 🔴🔴🔴 Нода отмечена как неактивная (delinquent)!!"
             WARN=1
         fi
 
         if [[ WARN -eq 1 ]]; then
-            MESSAGE="\n🔴🔴🔴${MESSAGE}\n\n"
             SendTelegramAllertMessage "${MESSAGE}"
         else
-            MESSAGE=" 🟢${MESSAGE} Всё в порядке!\n"
+            MESSAGE="🟢 ${MESSAGE} OK\n"
         fi
         REPORT+=$MESSAGE
     done
@@ -113,10 +110,14 @@ checkPingDeliquent() {
 generate_node_report() {
     WARN=0
     ADDITIONAL_MESSAGE=""
+
+    EPOCH_PERCENT_DONE=$(awk '/Epoch Completed Percent/ {print $4+0}' "$URL/temp$CLUSTER.txt" | xargs printf "%.2f%%")
+    END_EPOCH=$(awk '/Epoch Completed Time/ {$1=$2=""; print $0}' "$URL/temp$CLUSTER.txt" | tr -d '()')
+    EPOCH_MESSAGE="Epoch:${EPOCH} (${EPOCH_PERCENT_DONE}).\n${END_EPOCH}"
+
     epochCredits=$(cat $URL/delinq$CLUSTER.txt | jq '.validators[] | select(.identityPubkey == "'"${PUBLIC_KEY}"'" ) | .epochCredits ')
     mesto_top=$(cat $URL/mesto_top$CLUSTER.txt | grep ${PUBLIC_KEY} | awk '{print $1}' | grep -oE "[0-9]*|[0-9]*.[0-9]")
     proc=$(bc <<<"scale=2; $epochCredits*100/$lider2")
-    onboard=$(curl -s -X GET 'https://kyc-api.vercel.app/api/validators/list?search_term='"${PUBLIC_KEY}"'&limit=40&order_by=name&order=asc' | jq '.data[0].onboardingnumber')
     #dali blokov
     All_block=$(curl --silent -X POST ${API_URL} -H 'Content-Type: application/json' -d '{ "jsonrpc":"2.0","id":1, "method":"getLeaderSchedule", "params": [ null, { "identity": "'${PUB_KEY[$index]}'" }] }' | jq '.result."'${PUB_KEY[$index]}'"' | wc -l)
     All_block=$(echo "${All_block} -2" | bc)
@@ -154,7 +155,7 @@ generate_node_report() {
     BALANCE=$(getBalance ${PUBLIC_KEY} "$API_URL")
 
     if (($(bc <<<"$BALANCE < ${BALANCEWARN[$index]}"))); then
-        ADDITIONAL_MESSAGE+="🔴🔴🔴Недостаточно средств. Необходимо пополнить \n${PUBLIC_KEY}\n"
+        ADDITIONAL_MESSAGE+="🔴🔴🔴Недостаточно средств. Необходимо пополнить\n"
         WARN=1
     fi
 
@@ -173,25 +174,25 @@ generate_node_report() {
 
     VER=$(cat $URL/delinq$CLUSTER.txt | jq '.validators[] | select(.identityPubkey == "'"${PUBLIC_KEY}"'" ) | .version ' | sed 's/\"//g')
 
-    local onboard_part=""
-    if [[ -n $onboard && $onboard != "null" ]]; then
-        onboard_part="<b>Onboard:</b> $onboard"
+    if [[ $CLUSTER == t ]]; then
+        onboard=$(curl -s -X GET 'https://kyc-api.vercel.app/api/validators/list?search_term='"${PUBLIC_KEY}"'&limit=40&order_by=name&order=asc' | jq '.data[0].onboardingnumber')
+        if [[ -n $onboard && $onboard != "null" ]]; then
+        ADDITIONAL_MESSAGE+="<b>Onboard nr :</b> ${onboard}\n"
+        fi
     fi
 
-    echo "<b>${NODE_NAME[$index]} ${CLUSTER_NAME} nr ${index}</b> <b>$VER</b>:
+    echo "<b>${NODE_NAME[$index]} ${CLUSTER_NAME} nr ${index}</b>. Version:<b>$VER</b>:
+<code>${PUBLIC_KEY}</code>
 ${ADDITIONAL_MESSAGE}
-${PUBLIC_KEY}
-<code>
+
 <b>Blocks</b> All: $All_block Done: $Done Skipped: $skipped
 <b>Skip:</b> $skip% <b>Average:</b> $Average%
-<b>Credits:</b> $epochCredits ($proc%)
-<b>Position:</b> $mesto_top $onboard_part
-<b>Stake</b> Active: $ACTIVE
-Activating: $ACTIVATING
-Deactivating: $DEACTIVATING
-<b>Balance:</b> $BALANCE
-<b>Vote Balance:</b> $VOTE_BALANCE
-</code>"
+<b>Credits:</b> $epochCredits ($proc%) <b>Position:</b> $mesto_top 
+<b>Stake</b> Current: $ACTIVE. Next Epoch Cahnge: +$ACTIVATING,  -$DEACTIVATING
+<b>Balance:</b> Identity $BALANCE. Vote: $VOTE_BALANCE
+---
+${EPOCH_MESSAGE}
+"
 }
 
 checkPingDeliquent
@@ -205,20 +206,18 @@ if ((10#$CURRENT_MIN < 2)); then
     Average=$(jq '.averageStakeWeightedSkipRate' "$URL/delinq$CLUSTER.txt" | xargs printf "%.2f")
     Average=${Average:-0}
 
-    RESPONSE_EPOCH=$($SOLANA_PATH epoch-info -u$CLUSTER >"$URL/temp$CLUSTER.txt")
+    $($SOLANA_PATH epoch-info -u$CLUSTER >"$URL/temp$CLUSTER.txt")
     EPOCH=$(awk '/Epoch:/ {print $2}' "$URL/temp$CLUSTER.txt")
     PREW_EPOCH=$EPOCH-1
-    EPOCH_PERCENT=$(awk '/Epoch Completed Percent/ {print $4+0}' "$URL/temp$CLUSTER.txt" | xargs printf "%.2f%%")
-    END_EPOCH=$(awk '/Epoch Completed Time/ {$1=$2=""; print $0}' "$URL/temp$CLUSTER.txt" | tr -d '()')
 
     for index in ${!PUB_KEY[*]}; do
-        PUBLIC_KEY=PUB_KEY[$index]
+        PUBLIC_KEY=${PUB_KEY[$index]}
         node_report=$(generate_node_report)
 
         echo "${node_report}"
-        SendTelegramMessage "${node_report}" ${WARN}
+        sendTelegramMessage "${node_report}" ${WARN}
 
-        # Один раз  в сутки только проверяем
+        # Один раз  в сутки только проверяем Данные с SFDP за прошлую эпоху
         if (($(echo "$(date +%H) == $TIME_Info2" | bc -l))); then
 
             $(curl -s -X GET 'https://kyc-api.vercel.app/api/validators/details?pk='"${PUBLIC_KEY}"'&epoch='"$PREW_EPOCH"'' | jq '.stats' >$URL/info2$CLUSTER.txt)
@@ -240,15 +239,10 @@ if ((10#$CURRENT_MIN < 2)); then
                 echo -e "\n"
             else
                 echo "'"${TEXT_NODE2[$index]}"' Stake-o-matic еще не отработал. Информации нет"
-                sendTelegramMessage "${TEXT_NODE2[$index]} Stake-o-matic еще не отработал. Информации нет"
+                // sendTelegramMessage "${TEXT_NODE2[$index]} Stake-o-matic еще не отработал. Информации нет"
             fi
         fi
-
     done
-
-    EPOCH=$(cat $URL/temp$CLUSTER.txt | grep "Epoch:" | awk '{print $2}')
-    echo "${CLUSTER_NAME} ${EPOCH}"
-
 fi
 
 kill $TIMER_PID
