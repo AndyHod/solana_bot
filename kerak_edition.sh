@@ -85,14 +85,15 @@ checkPingDeliquent() {
         WARN=0
         PING=$(ping -c 4 ${IP[$index]} | grep transmitted | awk '{print $4}')
         DELINQUENT=$(cat $URL/delinq$CLUSTER.txt | jq '.validators[] | select(.identityPubkey == "'"${PUB_KEY[$index]}"'" ) | .delinquent ')
+        MESSAGE="${NODE_NAME[$index]}"
 
         if [[ $PING -eq 0 ]]; then
-            MESSAGE+=" Ping не проходит!!\n"
+            MESSAGE+="\nPing не проходит!!"
             WARN=1
         fi
 
         if [[ $DELINQUENT == true ]]; then
-            MESSAGE+=" Нода отмечена как неактивная (delinquent)!!\n"
+            MESSAGE+="\n Нода отмечена как неактивная (delinquent)!!"
             WARN=1
         fi
 
@@ -100,7 +101,7 @@ checkPingDeliquent() {
             MESSAGE="\n🔴🔴🔴${MESSAGE}\n\n"
             SendTelegramAllertMessage "${MESSAGE}"
         else
-            MESSAGE="\n🟢${MESSAGE} Всё в порядке!"
+            MESSAGE=" 🟢${MESSAGE} Всё в порядке!\n"
         fi
         REPORT+=$MESSAGE
     done
@@ -193,7 +194,7 @@ Deactivating: $DEACTIVATING
 </code>"
 }
 
-checkBalancePingDeliquent
+checkPingDeliquent
 
 CURRENT_MIN=$(date +%M)
 if ((10#$CURRENT_MIN < 2)); then
