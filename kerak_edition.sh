@@ -56,12 +56,11 @@ SendTelegramAllertMessage() {
     sendTelegramMessage "$1" 1
 }
 
-# Фоновый процесс, который ждет 1 минуту, а затем проверяет, завершился ли основной процесс
-(sleep 60 && if ps -p $$ >/dev/null; then
+# Фоновый процесс, gроверяет, завершился ли основной процесс  вовремя
+(sleep 90 && if ps -p $$ >/dev/null; then
     SendTelegramAllertMessage "Скрипт мониторинга подвис. Останавливаю принудительно"
     kill -SIGINT $$
 fi) &
-
 # Идентификатор фонового процесса
 TIMER_PID=$!
 
@@ -70,23 +69,22 @@ trap 'kill $TIMER_PID; exit' INT
 
 echo -e
 date
+
+if [[ $CLUSTER == m ]]; then
+    CLUSTER_NAME="Mainnet"
+
+else
+    CLUSTER_NAME="Testnet"
+fi
+
 $SOLANA_PATH validators -u$CLUSTER --output json-compact >$URL/delinq$CLUSTER.txt
 
-checkBalancePingDeliquent() {
+checkPingDeliquent() {
     REPORT="Общий отчет "
     for index in ${!PUB_KEY[*]}; do
         WARN=0
         PING=$(ping -c 4 ${IP[$index]} | grep transmitted | awk '{print $4}')
         DELINQUENT=$(cat $URL/delinq$CLUSTER.txt | jq '.validators[] | select(.identityPubkey == "'"${PUB_KEY[$index]}"'" ) | .delinquent ')
-        BALANCE=$(getBalance ${PUB_KEY[$index]} "$API_URL")
-        BALANCE_BY_INDEX[$index]=$BALANCE
-
-        MESSAGE="${NODE_NAME[$index]}, баланс: ${BALANCE}."
-
-        if (($(bc <<<"$BALANCE < ${BALANCEWARN[$index]}"))); then
-            MESSAGE+="\nНедостаточно средств. Необходимо пополнить \n${PUB_KEY[$index]}\n"
-            WARN=1
-        fi
 
         if [[ $PING -eq 0 ]]; then
             MESSAGE+=" Ping не проходит!!\n"
@@ -111,23 +109,77 @@ checkBalancePingDeliquent() {
     sendTelegramMessage "$REPORT"
 }
 
-generate_info() {
+generate_node_report() {
+    WARN=0
+    ADDITIONAL_MESSAGE=""
+    epochCredits=$(cat $URL/delinq$CLUSTER.txt | jq '.validators[] | select(.identityPubkey == "'"${PUBLIC_KEY}"'" ) | .epochCredits ')
+    mesto_top=$(cat $URL/mesto_top$CLUSTER.txt | grep ${PUBLIC_KEY} | awk '{print $1}' | grep -oE "[0-9]*|[0-9]*.[0-9]")
+    proc=$(bc <<<"scale=2; $epochCredits*100/$lider2")
+    onboard=$(curl -s -X GET 'https://kyc-api.vercel.app/api/validators/list?search_term='"${PUBLIC_KEY}"'&limit=40&order_by=name&order=asc' | jq '.data[0].onboardingnumber')
+    #dali blokov
+    All_block=$(curl --silent -X POST ${API_URL} -H 'Content-Type: application/json' -d '{ "jsonrpc":"2.0","id":1, "method":"getLeaderSchedule", "params": [ null, { "identity": "'${PUB_KEY[$index]}'" }] }' | jq '.result."'${PUB_KEY[$index]}'"' | wc -l)
+    All_block=$(echo "${All_block} -2" | bc)
+    if (($(bc <<<"$All_block < 0"))); then
+        All_block=0
+    fi
+    #done,sdelal,skipnul, skyp%
+    BLOCKS_PRODUCTION_JSON=$(curl --silent -X POST ${API_URL} -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":1, "method":"getBlockProduction", "params": [{ "identity": "'${PUB_KEY[$index]}'" } ]}')
+    Done=$(echo ${BLOCKS_PRODUCTION_JSON} | jq '.result.value.byIdentity."'${PUBLIC_KEY}'"[0]')
+    if (($(bc <<<"$Done == null"))); then
+        Done=0
+    fi
+    sdelal_blokov=$(echo ${BLOCKS_PRODUCTION_JSON} | jq '.result.value.byIdentity."'${PUBLIC_KEY}'"[1]')
+    if [[ -z "$sdelal_blokov" ]]; then
+        sdelal_blokov=0
+    fi
+    skipped=$(bc <<<"$Done - $sdelal_blokov")
+
+    if [[ $Done -eq 0 ]]; then
+        skip=0
+    else
+        skip=$(bc <<<"scale=2; $skipped*100/$Done")
+    fi
+
+    if [[ -z "$skip" ]]; then
+        skip=0
+    fi
+
+    if (($(bc <<<"$skip <= $Average + $skip_dop"))); then
+        skip=🟢$skip
+    else
+        skip=🔴$skip
+    fi
+
+    BALANCE=$(getBalance ${PUBLIC_KEY} "$API_URL")
+
+    if (($(bc <<<"$BALANCE < ${BALANCEWARN[$index]}"))); then
+        ADDITIONAL_MESSAGE+="🔴🔴🔴Недостаточно средств. Необходимо пополнить \n${PUBLIC_KEY}\n"
+        WARN=1
+    fi
+
+    VOTE_BALANCE=$(getBalance ${VOTE[$index]} "$API_URL")
+
+    RESPONSE_STAKES=$($SOLANA_PATH stakes ${VOTE[$index]} -u$CLUSTER --output json-compact)
+    ACTIVE=$(echo "scale=2; $(echo $RESPONSE_STAKES | jq -c '.[] | .activeStake' | paste -sd+ | bc)/1000000000" | bc)
+    ACTIVATING=$(echo "scale=2; $(echo $RESPONSE_STAKES | jq -c '.[] | .activatingStake' | paste -sd+ | bc)/1000000000" | bc)
+    if (($(echo "$ACTIVATING > 0" | bc -l))); then
+        ACTIVATING=$ACTIVATING🟢
+    fi
+    DEACTIVATING=$(echo "scale=2; $(echo $RESPONSE_STAKES | jq -c '.[] | .deactivatingStake' | paste -sd+ | bc)/1000000000" | bc)
+    if (($(echo "$DEACTIVATING > 0" | bc -l))); then
+        DEACTIVATING=$DEACTIVATING⚠️
+    fi
+
+    VER=$(cat $URL/delinq$CLUSTER.txt | jq '.validators[] | select(.identityPubkey == "'"${PUBLIC_KEY}"'" ) | .version ' | sed 's/\"//g')
+
     local onboard_part=""
     if [[ -n $onboard && $onboard != "null" ]]; then
         onboard_part="<b>Onboard:</b> $onboard"
     fi
 
-    local cluster_part=""
-    if [[ $CLUSTER == m ]]; then
-        cluster_name="Mainnet"
-        cluster_part="MainNet <b>$PUB</b> <b>$VER</b>"
-    else
-        cluster_name="Testnet"
-        cluster_part="<b>$PUB</b> $VER"
-    fi
-
-    echo "<b>${NODE_NAME[$index]} ${cluster_name} nr ${index}</b>:
-${PUB_KEY[$index]}
+    echo "<b>${NODE_NAME[$index]} ${CLUSTER_NAME} nr ${index}</b> <b>$VER</b>:
+${ADDITIONAL_MESSAGE}
+${PUBLIC_KEY}
 <code>
 <b>Blocks</b> All: $All_block Done: $Done Skipped: $skipped
 <b>Skip:</b> $skip% <b>Average:</b> $Average%
@@ -144,7 +196,7 @@ Deactivating: $DEACTIVATING
 checkBalancePingDeliquent
 
 CURRENT_MIN=$(date +%M)
-if ((10#$CURRENT_MIN < 5)); then
+if ((10#$CURRENT_MIN < 2)); then
 
     mesto_top_temp=$($SOLANA_PATH validators -u$CLUSTER --sort=credits -r -n >"$URL/mesto_top$CLUSTER.txt")
     lider=$(cat $URL/mesto_top$CLUSTER.txt | sed -n 2,1p | awk '{print $3}')
@@ -154,76 +206,21 @@ if ((10#$CURRENT_MIN < 5)); then
 
     RESPONSE_EPOCH=$($SOLANA_PATH epoch-info -u$CLUSTER >"$URL/temp$CLUSTER.txt")
     EPOCH=$(awk '/Epoch:/ {print $2}' "$URL/temp$CLUSTER.txt")
+    PREW_EPOCH=$EPOCH-1
     EPOCH_PERCENT=$(awk '/Epoch Completed Percent/ {print $4+0}' "$URL/temp$CLUSTER.txt" | xargs printf "%.2f%%")
     END_EPOCH=$(awk '/Epoch Completed Time/ {$1=$2=""; print $0}' "$URL/temp$CLUSTER.txt" | tr -d '()')
-    echo 140
+
     for index in ${!PUB_KEY[*]}; do
-        epochCredits=$(cat $URL/delinq$CLUSTER.txt | jq '.validators[] | select(.identityPubkey == "'"${PUB_KEY[$index]}"'" ) | .epochCredits ')
-        mesto_top=$(cat $URL/mesto_top$CLUSTER.txt | grep ${PUB_KEY[$index]} | awk '{print $1}' | grep -oE "[0-9]*|[0-9]*.[0-9]")
-        proc=$(bc <<<"scale=2; $epochCredits*100/$lider2")
-        onboard=$(curl -s -X GET 'https://kyc-api.vercel.app/api/validators/list?search_term='"${PUB_KEY[$index]}"'&limit=40&order_by=name&order=asc' | jq '.data[0].onboardingnumber')
-        #dali blokov
-        All_block=$(curl --silent -X POST ${API_URL} -H 'Content-Type: application/json' -d '{ "jsonrpc":"2.0","id":1, "method":"getLeaderSchedule", "params": [ null, { "identity": "'${PUB_KEY[$index]}'" }] }' | jq '.result."'${PUB_KEY[$index]}'"' | wc -l)
-        All_block=$(echo "${All_block} -2" | bc)
-        if (($(bc <<<"$All_block < 0"))); then
-            All_block=0
-        fi
-        #done,sdelal,skipnul, skyp%
-        BLOCKS_PRODUCTION_JSON=$(curl --silent -X POST ${API_URL} -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":1, "method":"getBlockProduction", "params": [{ "identity": "'${PUB_KEY[$index]}'" } ]}')
-        Done=$(echo ${BLOCKS_PRODUCTION_JSON} | jq '.result.value.byIdentity."'${PUB_KEY[$index]}'"[0]')
-        if (($(bc <<<"$Done == null"))); then
-            Done=0
-        fi
-        sdelal_blokov=$(echo ${BLOCKS_PRODUCTION_JSON} | jq '.result.value.byIdentity."'${PUB_KEY[$index]}'"[1]')
-        if [[ -z "$sdelal_blokov" ]]; then
-            sdelal_blokov=0
-        fi
-        skipped=$(bc <<<"$Done - $sdelal_blokov")
+        PUBLIC_KEY=PUB_KEY[$index]
+        node_report=$(generate_node_report)
 
-        if [[ $Done -eq 0 ]]; then
-            skip=0
-        else
-            skip=$(bc <<<"scale=2; $skipped*100/$Done")
-        fi
+        echo "${node_report}"
+        SendTelegramMessage "${node_report}" ${WARN}
 
-        if [[ -z "$skip" ]]; then
-            skip=0
-        fi
+        # Один раз  в сутки только проверяем
+        if (($(echo "$(date +%H) == $TIME_Info2" | bc -l))); then
 
-        if (($(bc <<<"$skip <= $Average + $skip_dop"))); then
-            skip=🟢$skip
-        else
-            skip=🔴$skip
-        fi
-        BALANCE=${BALANCE_BY_INDEX[$index]}
-
-        VOTE_BALANCE=$(getBalance ${VOTE[$index]} "$API_URL")
-
-        RESPONSE_STAKES=$($SOLANA_PATH stakes ${VOTE[$index]} -u$CLUSTER --output json-compact)
-        ACTIVE=$(echo "scale=2; $(echo $RESPONSE_STAKES | jq -c '.[] | .activeStake' | paste -sd+ | bc)/1000000000" | bc)
-        ACTIVATING=$(echo "scale=2; $(echo $RESPONSE_STAKES | jq -c '.[] | .activatingStake' | paste -sd+ | bc)/1000000000" | bc)
-        if (($(echo "$ACTIVATING > 0" | bc -l))); then
-            ACTIVATING=$ACTIVATING🟢
-        fi
-        DEACTIVATING=$(echo "scale=2; $(echo $RESPONSE_STAKES | jq -c '.[] | .deactivatingStake' | paste -sd+ | bc)/1000000000" | bc)
-        if (($(echo "$DEACTIVATING > 0" | bc -l))); then
-            DEACTIVATING=$DEACTIVATING⚠️
-        fi
-
-        VER=$(cat $URL/delinq$CLUSTER.txt | jq '.validators[] | select(.identityPubkey == "'"${PUB_KEY[$index]}"'" ) | .version ' | sed 's/\"//g')
-
-        PUB=$(echo ${PUB_KEY[$index]:0:10})
-        info=$(generate_info)
-        echo "Нода в порядке ${info} "
-        sendTelegramMessage "$info"
-    done
-
-    if (($(echo "$(date +%H) == $TIME_Info2" | bc -l))) && (($(echo "$(date +%M) < 5" | bc -l))); then
-        let EPOCH=$EPOCH-1
-
-        for index in ${!PUB_KEY[*]}; do
-
-            info2=$(curl -s -X GET 'https://kyc-api.vercel.app/api/validators/details?pk='"${PUB_KEY[$index]}"'&epoch='"$EPOCH"'' | jq '.stats' >$URL/info2$CLUSTER.txt)
+            $(curl -s -X GET 'https://kyc-api.vercel.app/api/validators/details?pk='"${PUBLIC_KEY}"'&epoch='"$PREW_EPOCH"'' | jq '.stats' >$URL/info2$CLUSTER.txt)
 
             state_action=$(cat $URL/info2$CLUSTER.txt | jq '.state_action' | sed 's/\"//g')
             asn=$(cat $URL/info2$CLUSTER.txt | jq '.epoch_data_center.asn')
@@ -232,9 +229,8 @@ if ((10#$CURRENT_MIN < 5)); then
             data_center_percent=$(printf "%.2f" $data_center_percent_temp)
             reported_metrics_summar=$(cat $URL/info2$CLUSTER.txt | jq '.self_reported_metrics_summary.reason' | sed 's/\"//g')
 
-            PUB=$(echo ${PUB_KEY[$index]:0:8})
             info2='"
-<b>'"${TEXT_NODE2[$index]} epoch $EPOCH"'</b>['"$PUB"'] <code>
+<b>'"${NODE_NAME[$index]} epoch $PREW_EPOCH"'</b>['"$PUBLIC_KEY"'] <code>
 *'$state_action' 
 *'"$asn"' '"$location"' '"$data_center_percent"'%
 *'"$reported_metrics_summar"'</code>"'
@@ -245,10 +241,12 @@ if ((10#$CURRENT_MIN < 5)); then
                 echo "'"${TEXT_NODE2[$index]}"' Stake-o-matic еще не отработал. Информации нет"
                 sendTelegramMessage "${TEXT_NODE2[$index]} Stake-o-matic еще не отработал. Информации нет"
             fi
-        done
-    fi
+        fi
+
+    done
+
     EPOCH=$(cat $URL/temp$CLUSTER.txt | grep "Epoch:" | awk '{print $2}')
-    echo "$TEXT_INFO_EPOCH"
+    echo "${CLUSTER_NAME} ${EPOCH}"
 
 fi
 
