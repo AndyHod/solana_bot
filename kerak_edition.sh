@@ -52,12 +52,9 @@ send_telegram_allert_message() {
 }
 
 halt_on_hangup() {
-    (sleep 90 && if ps -p $$ >/dev/null; then
-        send_telegram_allert_message "Скрипт мониторинга подвис. Останавливаю принудительно"
-        kill -SIGINT $$
-    fi) &
-    timer_pid=$!
-    trap 'kill $timer_pid; exit' INT
+   ( sleep 90 && if ps -p $$ > /dev/null; then send_telegram "$ALERT_MESSAGE"; kill -SIGINT $$; fi ) &
+    TIMER_PID=$!
+    trap 'kill $TIMER_PID; exit' INT
 }
 
 halt_on_hangup
@@ -203,10 +200,13 @@ if ((10#$CURRENT_MIN < 2)); then
         node_report=$(generate_node_report)
         echo "${node_report}"
 
+        // node_report=$(generate_node_report)
+        echo 209
+        echo "${node_report}"
         send_telegram_message "${node_report}" ${WARN}
 
         # Один раз  в сутки только проверяем Данные с SFDP за прошлую эпоху
-        if [ $(date +%H) -eq "$TIME_Info2" ]; then
+        if [ "$1" -eq 1 ] || [ $(date +%H) -eq "$TIME_Info2" ]; then
 
             $(curl -s -X GET 'https://kyc-api.vercel.app/api/validators/details?pk='"${public_key}"'&epoch='"$prew_epoch"'' | jq '.stats' >$url/info2$CLUSTER.txt)
             echo 216
@@ -233,4 +233,4 @@ if ((10#$CURRENT_MIN < 2)); then
     done
 fi
 
-kill $timer_pid
+kill $TIMER_PID
