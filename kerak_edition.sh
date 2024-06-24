@@ -203,13 +203,10 @@ if ((10#$CURRENT_MIN < 2)); then
         node_report=$(generate_node_report)
         echo "${node_report}"
 
-        // node_report=$(generate_node_report)
-        echo 209
-        echo "${node_report}"
         send_telegram_message "${node_report}" ${WARN}
 
         # Один раз  в сутки только проверяем Данные с SFDP за прошлую эпоху
-        if [ "$1" -eq 1 ] || [ $(date +%H) -eq "$TIME_Info2" ]; then
+        if [ $(date +%H) -eq "$TIME_Info2" ]; then
 
             $(curl -s -X GET 'https://kyc-api.vercel.app/api/validators/details?pk='"${public_key}"'&epoch='"$prew_epoch"'' | jq '.stats' >$url/info2$CLUSTER.txt)
             echo 216
