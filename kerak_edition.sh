@@ -52,7 +52,10 @@ send_telegram_allert_message() {
 }
 
 halt_on_hangup() {
-   ( sleep 90 && if ps -p $$ > /dev/null; then send_telegram "$ALERT_MESSAGE"; kill -SIGINT $$; fi ) &
+    (sleep 90 && if ps -p $$ >/dev/null; then
+        send_telegram "$ALERT_MESSAGE"
+        kill -SIGINT $$
+    fi) &
     TIMER_PID=$!
     trap 'kill $TIMER_PID; exit' INT
 }
@@ -95,14 +98,11 @@ check_ping_deliquent() {
         report+=$message
     done
     echo -e "$report"
-    send_telegram_message "$report"
 }
 
 generate_node_report() {
     warn=0
     additional_message=""
-    epoch_percent_done=$(awk '/Epoch Completed Percent/ {print $4+0}' "$url/temp_$CLUSTER.txt" | xargs printf "%.2f%%")
-    end_epoch=$(awk '/Epoch Completed Time/ {$1=$2=""; print $0}' "$url/temp_$CLUSTER.txt" | tr -d '()')
 
     epoch_credits=$(cat $url/delinq_$CLUSTER.txt | jq ".validators[] | select(.identityPubkey == \"$public_key\" ) | .epochCredits ")
     position_by_credits=$(cat $url/validtors_by_credits_$CLUSTER.txt | grep $public_key | awk '{print $1}' | grep -oE "[0-9]*|[0-9]*.[0-9]")
@@ -148,12 +148,12 @@ generate_node_report() {
     response_stakes=$($SOLANA_PATH stakes ${VOTE_KEY[$index]} -u$CLUSTER --output json-compact)
     active=$(echo "scale=2; $(echo $response_stakes | jq -c '.[] | .activeStake' | paste -sd+ | bc)/1000000000" | bc)
     activating=$(echo "scale=2; $(echo $response_stakes | jq -c '.[] | .activatingStake' | paste -sd+ | bc)/1000000000" | bc)
-    if (($(echo "$activating > 0" | bc -l))); then
-        activating="$activating🟢"
-    fi
     deactivating=$(echo "scale=2; $(echo $response_stakes | jq -c '.[] | .deactivatingStake' | paste -sd+ | bc)/1000000000" | bc)
-    if (($(echo "$deactivating > 0" | bc -l))); then
-        deactivating="$deactivating⚠️"
+    stake_report="Current $active. Next: +$activating,  -$deactivating"
+    if (($(echo "$activating - $deactivating > 500" | bc -l))); then
+        stake_report+="🟢"
+    elif (($(echo "$activating - $deactivating < -200" | bc -l))); then
+        stake_report+="⚠️"
     fi
 
     ver=$(cat $url/delinq_$CLUSTER.txt | jq '.validators[] | select(.identityPubkey == "'"${public_key}"'" ) | .version ' | sed 's/\"//g')
@@ -171,10 +171,10 @@ ${additional_message}
 Average skip by cluster: $skip_average%
 <b>Credits:</b> $epoch_credits ($credits_percent%) 
 <b>Position:</b> $position_by_credits 
-<b>Stake</b>: Current $active. Next: +$activating,  -$deactivating
+<b>Stake</b>: $stake_report
 <b>Balance:</b> Identity $balance. Vote: $vote_balance
----
-Epoch: ${epoch} (${epoch_percent_done}).\n${end_epoch}
+
+
 "
 
 }
@@ -193,15 +193,19 @@ if ((10#$CURRENT_MIN < 2)); then
     $($SOLANA_PATH epoch-info -u$CLUSTER >"$url/temp_$CLUSTER.txt")
     epoch=$(awk '/Epoch:/ {print $2}' "$url/temp_$CLUSTER.txt")
     prew_epoch=$epoch-1
+    epoch_percent_done=$(awk '/Epoch Completed Percent/ {print $4+0}' "$url/temp_$CLUSTER.txt" | xargs printf "%.2f%%")
+    end_epoch=$(awk '/Epoch Completed Time/ {$1=$2=""; print $0}' "$url/temp_$CLUSTER.txt" | tr -d '()')
+
+    epoch_info "---------------------------
+Epoch: ${epoch} (${epoch_percent_done}).\n${end_epoch}
+"
+    sendTelegramMessage "${epoch_info}"
+    echo ${epoch_info}
 
     for index in ${!PUB_KEY[*]}; do
         public_key=${PUB_KEY[$index]}
-        echo "207 ${public_key}"
         node_report=$(generate_node_report)
-        echo "${node_report}"
 
-        // node_report=$(generate_node_report)
-        echo 209
         echo "${node_report}"
         send_telegram_message "${node_report}" ${WARN}
 
