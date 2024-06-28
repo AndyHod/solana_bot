@@ -203,11 +203,12 @@ Epoch: ${epoch} (${epoch_percent_done}).\n${end_epoch}
     echo ${epoch_info}
 
     for index in ${!PUB_KEY[*]}; do
+    
         public_key=${PUB_KEY[$index]}
         node_report=$(generate_node_report)
 
         echo "${node_report}"
-        send_telegram_message "${node_report}" ${WARN}
+        send_telegram_message "${node_report}" ${warn}
 
         # Один раз  в сутки только проверяем Данные с SFDP за прошлую эпоху
         if [ "$1" -eq 1 ] || [ $(date +%H) -eq "$TIME_Info2" ]; then
