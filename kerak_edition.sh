@@ -38,7 +38,10 @@ send_telegram_message() {
     local chat_id="$CHAT_ID_LOG"
 
     if [[ $is_alarm -ne 0 ]]; then
-        chat_id="$CHAT_ID_ALARM"
+        curl --silent --header 'Content-Type: application/json' \
+            --request 'POST' \
+            --data '{"chat_id":"'"$CHAT_ID_ALARM"'","text":"'"$message_text"'","parse_mode":"HTML"}' \
+            "https://api.telegram.org/bot$BOT_TOKEN/sendMessage" >/dev/null
     fi
 
     curl --silent --header 'Content-Type: application/json' \
@@ -101,7 +104,6 @@ check_ping_deliquent() {
 }
 
 generate_node_report() {
-    warn=0
     additional_message=""
 
     epoch_credits=$(cat $url/delinq_$CLUSTER.txt | jq ".validators[] | select(.identityPubkey == \"$public_key\" ) | .epochCredits ")
@@ -141,7 +143,6 @@ generate_node_report() {
     balance=$(get_balance ${public_key} "$API_URL")
     if (($(bc <<<"$balance < ${BALANCEWARN[$index]}"))); then
         additional_message+="🔴🔴🔴Недостаточно средств. Необходимо пополнить\n"
-        warn=1
     fi
     vote_balance=$(get_balance ${VOTE_KEY[$index]} "$API_URL")
 
@@ -164,25 +165,24 @@ generate_node_report() {
         fi
     fi
 
-    echo = "<b>${NODE_NAME[$index]} ${cluster_name} nr ${index}</b>. Version:<b>$ver</b>:
+    echo "<b>${NODE_NAME[$index]} ${cluster_name} nr ${index}</b>. Version:<b>$ver</b>:
 <code>${public_key}</code>
 ${additional_message}
+
 <b>Blocks</b> All: $all_block Done: $blocks_counter Skipped: $skipped ($skip_percent%)
 Average skip by cluster: $skip_average%
 <b>Credits:</b> $epoch_credits ($credits_percent%) 
-<b>Position:</b> $position_by_credits 
+<b>Position: $position_by_credits </b> 
 <b>Stake</b>: $stake_report
+
 <b>Balance:</b> Identity $balance. Vote: $vote_balance
-
-
 "
-
 }
 
 check_ping_deliquent
 
 CURRENT_MIN=$(date +%M)
-if ((10#$CURRENT_MIN < 2)); then
+if ((10#$CURRENT_MIN < 59)); then
 
     $($SOLANA_PATH validators -u$CLUSTER --sort=credits -r -n >"$url/validtors_by_credits_$CLUSTER.txt")
     lider=$(cat $url/validtors_by_credits_$CLUSTER.txt | sed -n 2,1p | awk '{print $3}')
@@ -196,22 +196,26 @@ if ((10#$CURRENT_MIN < 2)); then
     epoch_percent_done=$(awk '/Epoch Completed Percent/ {print $4+0}' "$url/temp_$CLUSTER.txt" | xargs printf "%.2f%%")
     end_epoch=$(awk '/Epoch Completed Time/ {$1=$2=""; print $0}' "$url/temp_$CLUSTER.txt" | tr -d '()')
 
-    epoch_info "---------------------------
+    epoch_info="---------------------------
 Epoch: ${epoch} (${epoch_percent_done}).\n${end_epoch}
 "
-    sendTelegramMessage "${epoch_info}"
-    echo ${epoch_info}
+    send_telegram_message "${epoch_info}"
+    echo epoch info ${epoch_info}
 
     for index in ${!PUB_KEY[*]}; do
-    
+
         public_key=${PUB_KEY[$index]}
         node_report=$(generate_node_report)
+        if echo "$node_report" | grep -q '🔴🔴🔴'; then
+            send_telegram_allert_message "${node_report}"
+        else
+            send_telegram_message "${node_report}"
+        fi
 
         echo "${node_report}"
-        send_telegram_message "${node_report}" ${warn}
 
         # Один раз  в сутки только проверяем Данные с SFDP за прошлую эпоху
-        if [ "$1" -eq 1 ] || [ $(date +%H) -eq "$TIME_Info2" ]; then
+        if [ $(date +%H) -eq "$TIME_Info2" ]; then
 
             $(curl -s -X GET 'https://kyc-api.vercel.app/api/validators/details?pk='"${public_key}"'&epoch='"$prew_epoch"'' | jq '.stats' >$url/info2$CLUSTER.txt)
             echo 216
@@ -222,16 +226,18 @@ Epoch: ${epoch} (${epoch_percent_done}).\n${end_epoch}
             data_center_percent=$(printf "%.2f" $data_center_percent_temp)
             reported_metrics_summar=$(cat $url/info2$CLUSTER.txt | jq '.self_reported_metrics_summary.reason' | sed 's/\"//g')
             echo 223
+
             info2='"
 <b>'"${NODE_NAME[$index]} epoch $prew_epoch"'</b>['"$public_key"'] <code>
 *'$state_action' 
 *'"$asn"' '"$location"' '"$data_center_percent"'%
 *'"$reported_metrics_summar"'</code>"'
+
             if [[ $reported_metrics_summar != null ]]; then
                 sendTelegramMessage "$info2"
                 echo -e "\n"
             else
-                echo "'"${TEXT_NODE2[$index]}"' Stake-o-matic еще не отработал. Информации нет"
+                echo "Stake-o-matic еще не отработал. Информации нет"
                 # sendTelegramMessage "${TEXT_NODE2[$index]} Stake-o-matic еще не отработал. Информации нет"
             fi
         fi
