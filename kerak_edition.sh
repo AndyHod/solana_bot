@@ -166,7 +166,6 @@ generate_node_report() {
     fi
 
     echo "<b>${NODE_NAME[$index]} ${cluster_name} nr ${index}</b>. Version:<b>$ver</b>:
-<code>${public_key}</code>
 ${additional_message}
 
 <b>Blocks</b> All: $all_block Done: $blocks_counter Skipped: $skipped ($skip_percent%)
@@ -176,6 +175,7 @@ Average skip by cluster: $skip_average%
 <b>Stake</b>: $stake_report
 
 <b>Balance:</b> Identity $balance. Vote: $vote_balance
+<code>${public_key}</code>
 "
 }
 
