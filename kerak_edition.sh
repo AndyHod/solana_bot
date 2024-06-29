@@ -142,7 +142,7 @@ generate_node_report() {
     fi
     balance=$(get_balance ${public_key} "$API_URL")
     if (($(bc <<<"$balance < ${BALANCEWARN[$index]}"))); then
-        additional_message+="🔴🔴🔴Недостаточно средств. Необходимо пополнить\n"
+        additional_message+="🔴🔴🔴 Пополни identity!!\n"
     fi
     vote_balance=$(get_balance ${VOTE_KEY[$index]} "$API_URL")
 
@@ -182,7 +182,7 @@ Average skip by cluster: $skip_average%
 check_ping_deliquent
 
 CURRENT_MIN=$(date +%M)
-if ((10#$CURRENT_MIN < 59)); then
+if ((10#$CURRENT_MIN < 2)); then
 
     $($SOLANA_PATH validators -u$CLUSTER --sort=credits -r -n >"$url/validtors_by_credits_$CLUSTER.txt")
     lider=$(cat $url/validtors_by_credits_$CLUSTER.txt | sed -n 2,1p | awk '{print $3}')
