@@ -179,6 +179,47 @@ Average skip by cluster: $skip_average%
 "
 }
 
+get_marinade_time() {
+    local file="$1"
+
+    # Извлечение строки и времени из скобок
+    local time_remaining
+    time_remaining=$(grep "Epoch Completed Time:" "$file" | sed -n 's/.*(\(.*\)).*/\1/p')
+
+    # Проверка, найдена ли строка
+    if [ -z "$time_remaining" ]; then
+        echo "Ошибка: Не найдена строка с 'Epoch Completed Time'"
+        return 1
+    fi
+
+    # Функция для преобразования времени в секунды
+    time_to_seconds() {
+        local time="$1"
+        local h=$(echo "$time" | grep -o -E '[0-9]+h' | grep -o '[0-9]\+')
+        local m=$(echo "$time" | grep -o -E '[0-9]+m' | grep -o '[0-9]\+')
+        local s=$(echo "$time" | grep -o -E '[0-9]+s' | grep -o '[0-9]\+')
+
+        echo $(((10#$h * 3600) + (10#$m * 60) + 10#$s))
+    }
+
+    # Переводим время в секунды
+    local remaining_seconds
+    remaining_seconds=$(time_to_seconds "$time_remaining")
+
+    # Вычитаем 2.5 часов в секундах
+    local subtract_seconds=$((2.5 * 3600))
+    local new_remaining_seconds=$((remaining_seconds - subtract_seconds))
+
+    # Преобразуем обратно в часы, минуты и секунды
+    local new_hours=$((new_remaining_seconds / 3600))
+    local new_minutes=$(((new_remaining_seconds % 3600) / 60))
+    local new_seconds=$((new_remaining_seconds % 60))
+
+    # Форматируем время и записываем результат
+    marinade_time_to_go="${new_hours}h ${new_minutes}m ${new_seconds}s"
+    echo "$marinade_time_to_go"
+}
+
 check_ping_deliquent
 
 CURRENT_MIN=$(date +%M)
@@ -195,9 +236,10 @@ if ((10#$CURRENT_MIN < 2)); then
     prew_epoch=$epoch-1
     epoch_percent_done=$(awk '/Epoch Completed Percent/ {print $4+0}' "$url/temp_$CLUSTER.txt" | xargs printf "%.2f%%")
     end_epoch=$(awk '/Epoch Completed Time/ {$1=$2=""; print $0}' "$url/temp_$CLUSTER.txt" | tr -d '()')
+    marinade_time_to_go=$(get_marinade_time "$url/temp_$CLUSTER.txt")
 
     epoch_info="---------------------------
-Epoch: ${epoch} (${epoch_percent_done}).\n${end_epoch}
+Epoch: ${epoch} (${epoch_percent_done}) Marinade to go ${marinade_time_to_go}.\n${end_epoch}
 "
     send_telegram_message "${epoch_info}"
     echo epoch info ${epoch_info}
