@@ -207,7 +207,7 @@ get_marinade_time() {
     remaining_seconds=$(time_to_seconds "$time_remaining")
 
     # Вычитаем 2.5 часов в секундах
-    local subtract_seconds=$((2.5 * 3600))
+    local subtract_seconds=$((25 * 360))
     local new_remaining_seconds=$((remaining_seconds - subtract_seconds))
 
     # Преобразуем обратно в часы, минуты и секунды
@@ -216,8 +216,8 @@ get_marinade_time() {
     local new_seconds=$((new_remaining_seconds % 60))
 
     # Форматируем время и записываем результат
-    marinade_time_to_go="${new_hours}h ${new_minutes}m ${new_seconds}s"
-    echo "$marinade_time_to_go"
+    result="Left: ${new_hours}h ${new_minutes}m ${new_seconds}s"
+    echo "$result"
 }
 
 check_ping_deliquent
